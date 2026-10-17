@@ -1,0 +1,71 @@
+
+name: Build Drama3 CUDA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    steps:
+      - name: Get latest audio.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: 0xShug0/audio.cpp
+          ref: main
+          submodules: recursive
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install CUDA
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: '13.2.0'
+
+      - name: Build Drama3
+        shell: pwsh
+        run: |
+          .\scripts\build_windows.ps1 `
+            -Preset windows-cuda-release `
+            -ModelSet custom `
+            -Models fish_drama3 `
+            -Target audiocpp_cli `
+            -CpuArch avx2 `
+            -CudaArchitectures 120-real `
+            -Jobs 4
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force out | Out-Null
+
+          Copy-Item build\windows-cuda-release\bin\* out\ -Recurse -Force
+          Copy-Item model_specs out\model_specs -Recurse -Force
+
+          $cudaDirs = @("$env:CUDA_PATH\bin\x64", "$env:CUDA_PATH\bin")
+          $dlls = @(
+            "cublas64_13.dll",
+            "cublasLt64_13.dll",
+            "cufft64_12.dll",
+            "cudart64_13.dll"
+          )
+
+          foreach ($dll in $dlls) {
+            $source = $cudaDirs |
+              ForEach-Object { Join-Path $_ $dll } |
+              Where-Object { Test-Path $_ } |
+              Select-Object -First 1
+            if (-not $source) { throw "Missing CUDA DLL: $dll" }
+            Copy-Item $source out\ -Force
+          }
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Drama3-Windows-CUDA
+          path: out/
+          retention-days: 7
